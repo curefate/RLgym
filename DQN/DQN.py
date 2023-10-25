@@ -151,10 +151,10 @@ if __name__ == '__main__':
         "--path", type=str, default='', help="path of model"
     )
     parser.add_argument(
-        "--save_path", type=str, default='DQN/Cartpole/checkpoint', help="path to save"
+        "--save_path", type=str, default='Cartpole/checkpoint', help="path to save"
     )
     parser.add_argument(
-        "--logs_path", type=str, default='DQN/Cartpole/logs', help="path to logs"
+        "--logs_path", type=str, default='Cartpole/logs', help="path to logs"
     )
     parser.add_argument(
         "--end_iter", type=int, default=10000, help="end_iter"
