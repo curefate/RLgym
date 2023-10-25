@@ -142,7 +142,7 @@ class DQN_trainer():
             if idx % 1000 == 0:
                 torch.save({"model": model.state_dict()},
                            (self.save_path + f"/{str(idx).zfill(6)}.pt"))
-        print("Done!")
+            print("Done!")
 
 
 if __name__ == '__main__':
