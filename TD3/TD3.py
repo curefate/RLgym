@@ -12,7 +12,7 @@ import numpy as np
 
 
 class Actor(nn.Module):
-    def __init__(self, state_dim, action_dim, fc1_dim=128, fc2_dim=256, lr=1e-4):
+    def __init__(self, state_dim, action_dim, fc1_dim=400, fc2_dim=300, lr=3e-4):
         super(Actor, self).__init__()
         self.fc1 = nn.Linear(state_dim, fc1_dim)
         self.ln1 = nn.LayerNorm(fc1_dim)
@@ -29,7 +29,7 @@ class Actor(nn.Module):
 
 
 class Critic(nn.Module):
-    def __init__(self, state_dim, action_dim, fc1_dim=128, fc2_dim=256, lr=1e-4):
+    def __init__(self, state_dim, action_dim, fc1_dim=400, fc2_dim=300, lr=3e-4):
         super(Critic, self).__init__()
         self.fc1 = nn.Linear(state_dim + action_dim, fc1_dim)
         self.ln1 = nn.LayerNorm(fc1_dim)
@@ -47,8 +47,8 @@ class Critic(nn.Module):
 
 
 class TD3:
-    def __init__(self, state_dim, action_dim, device, actor_fc1_dim=128, actor_fc2_dim=256, actor_lr=1e-4,
-                 critic_fc1_dim=128, critic_fc2_dim=256, critic_lr=1e-4):
+    def __init__(self, state_dim, action_dim, device, actor_fc1_dim=400, actor_fc2_dim=300, actor_lr=3e-4,
+                 critic_fc1_dim=400, critic_fc2_dim=300, critic_lr=3e-4):
         self.device = device
         self.actor = Actor(state_dim, action_dim, actor_fc1_dim, actor_fc2_dim, actor_lr).to(device)
         self.target_actor = Actor(state_dim, action_dim, actor_fc1_dim, actor_fc2_dim, actor_lr).to(device)
@@ -56,8 +56,9 @@ class TD3:
         self.target_critic1 = Critic(state_dim, action_dim, critic_fc1_dim, critic_fc2_dim, critic_lr).to(device)
         self.critic2 = Critic(state_dim, action_dim, critic_fc1_dim, critic_fc2_dim, critic_lr).to(device)
         self.target_critic2 = Critic(state_dim, action_dim, critic_fc1_dim, critic_fc2_dim, critic_lr).to(device)
+        self.accumulate(tau=1)
 
-    def select_action(self, state, train=False, noise_scale=.1):
+    def select_action(self, state, train=False, noise_scale=.01):
         self.actor.eval()
         state = torch.tensor(state).view(-1, len(state)).to(self.device)
         action = self.actor(state)
@@ -67,7 +68,7 @@ class TD3:
             action = torch.clamp(action + noise, -1, 1)
 
         self.actor.train()
-        return action.max(1)[1].item()
+        return action.squeeze().detach().cpu().numpy()
 
     def accumulate(self, tau):
         for actor_params, target_actor_params in zip(self.actor.parameters(), self.target_actor.parameters()):
@@ -144,25 +145,27 @@ class TD3_trainer:
 
         with torch.no_grad():
             next_actions = self.model.target_actor(next_states)
-            action_noise = (torch.randn(actions.shape) * .1).to(self.device)
+            action_noise = (torch.randn(actions.shape) * self.noise_scale).to(self.device)
             # smooth noise
             action_noise = torch.clamp(action_noise, -self.noise_clip, self.noise_clip)
             next_actions = torch.clamp(next_actions + action_noise, -1, 1)
 
-            q1 = self.model.target_critic1(next_states, next_actions).view(-1)
-            q2 = self.model.target_critic2(next_states, next_actions).view(-1)
-            critic_value = torch.min(q1, q2)
+            q1_ = self.model.target_critic1(next_states, next_actions).view(-1)
+            q2_ = self.model.target_critic2(next_states, next_actions).view(-1)
+            q1_[dones] = 0.0
+            q2_[dones] = 0.0
+            critic_value = torch.min(q1_, q2_)
             # TD predict
             predict_target_value = rewards + self.gamma * critic_value
 
         # all way predict
-        q1 = self.model.target_critic1(states, actions).view(-1)
-        q2 = self.model.target_critic2(states, actions).view(-1)
+        q1 = self.model.critic1(states, actions).view(-1)
+        q2 = self.model.critic2(states, actions).view(-1)
 
         # optimize critics
         critic1_loss = nn.functional.mse_loss(q1.float(), predict_target_value.detach().float())
         critic2_loss = nn.functional.mse_loss(q2.float(), predict_target_value.detach().float())
-        critic_loss = (critic1_loss + critic2_loss).float()
+        critic_loss = critic1_loss + critic2_loss
         self.model.critic1.optimizer.zero_grad()
         self.model.critic2.optimizer.zero_grad()
         critic_loss.backward()
@@ -176,9 +179,10 @@ class TD3_trainer:
         # optimize actor
         next_actions = self.model.actor(states)
         q1 = self.model.critic1(states, next_actions)
-        q2 = self.model.critic2(states, next_actions)
-        q = torch.min(q1, q2)
-        actor_loss = -torch.mean(q)
+        # q2 = self.model.critic2(states, next_actions)
+        # q = torch.min(q1, q2)
+        # actor_loss = -torch.mean(q)
+        actor_loss = -torch.mean(q1)
         self.model.actor.optimizer.zero_grad()
         actor_loss.backward()
         self.model.actor.optimizer.step()
@@ -202,6 +206,7 @@ class TD3_trainer:
             done = False
 
             # start play
+            total_reward = 0
             while not done:
                 # select action
                 action = self.model.select_action(state, train=True)
@@ -209,6 +214,7 @@ class TD3_trainer:
 
                 # step
                 next_state, reward, terminated, truncated, info = env.step(action)
+                total_reward += reward
                 if terminated or truncated:
                     done = True
 
@@ -221,9 +227,16 @@ class TD3_trainer:
                 # optimize
                 self.optimize()
 
+            logs.add_scalar(
+                tag="Train Total Reward",
+                scalar_value=total_reward,
+                global_step=idx
+            )
+
             # test
             if idx % 100 == 0:
-                for i in range(100):
+                self.model.actor.eval()
+                for i in range(30):
                     total_reward = 0
                     test_state, test_info = env.reset()
                     test_done = False
@@ -235,20 +248,15 @@ class TD3_trainer:
                         if test_terminated or test_truncated:
                             done = True
                             break
-                avg_reward = total_reward / 100
+                self.model.actor.train()
                 logs.add_scalar(
                     tag="Test Total Reward",
                     scalar_value=total_reward,
                     global_step=idx
                 )
-                logs.add_scalar(
-                    tag="Test Average Reward",
-                    scalar_value=avg_reward,
-                    global_step=idx
-                )
 
             # save
-            if idx % 1000 == 0:
+            if idx % 200 == 0:
                 self.model.save(self.save_path + f"/{str(idx).zfill(6)}.pt")
 
         print("Done!")
@@ -275,13 +283,13 @@ if __name__ == '__main__':
         "--logs_path", type=str, default='LunarLanderContinuous-v2/logs', help="path to logs"
     )
     parser.add_argument(
-        "--end_iter", type=int, default=10001, help="end_iter"
+        "--end_iter", type=int, default=3001, help="end_iter"
     )
     parser.add_argument(
         "--start_iter", type=int, default=0, help="start_iter"
     )
     parser.add_argument(
-        "--lr", type=float, default=1e-4, help="learning rate"
+        "--lr", type=float, default=3e-4, help="learning rate"
     )
     parser.add_argument(
         "--gamma", type=float, default=.99, help="discount constant"
@@ -293,7 +301,7 @@ if __name__ == '__main__':
         "--tau", type=float, default=.005, help="accumulate rate"
     )
     parser.add_argument(
-        "--noise_scale", type=float, default=.1, help="noise scale"
+        "--noise_scale", type=float, default=.05, help="noise scale"
     )
     parser.add_argument(
         "--noise_clip", type=float, default=.5, help="noise clip"
@@ -307,7 +315,7 @@ if __name__ == '__main__':
         args.device = 'cuda'
 
     env = gym.make('LunarLanderContinuous-v2', render_mode=None)
-    model = TD3(env.observation_space.shape[0], env.action_space.shape[0], args.device)
+    model = TD3(env.observation_space.shape[0], env.action_space.shape[0], args.device, actor_lr=args.lr, critic_lr=args.lr)
     if args.path != '':
         model.load(args.path)
 
