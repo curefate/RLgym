@@ -8,7 +8,7 @@ if __name__ == '__main__':
 
     device = "cuda"
     model = TD3(env.observation_space.shape[0], env.action_space.shape[0], device)
-    model.load("LunarLanderContinuous-v2/checkpoint/000400.pt")
+    model.load("LunarLanderContinuous-v2/checkpoint/003000.pt")
     done = False
     i = 0
     # print(env.action_space.low)
