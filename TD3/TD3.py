@@ -256,7 +256,7 @@ class TD3_trainer:
                 )
 
             # save
-            if idx % 200 == 0:
+            if idx % 500 == 0:
                 self.model.save(self.save_path + f"/{str(idx).zfill(6)}.pt")
 
         print("Done!")
@@ -277,10 +277,10 @@ if __name__ == '__main__':
         "--path", type=str, default='', help="path of model"
     )
     parser.add_argument(
-        "--save_path", type=str, default='LunarLanderContinuous-v2/checkpoint', help="path to save"
+        "--save_path", type=str, default='BipedalWalker-v3/checkpoint', help="path to save"
     )
     parser.add_argument(
-        "--logs_path", type=str, default='LunarLanderContinuous-v2/logs', help="path to logs"
+        "--logs_path", type=str, default='BipedalWalker-v3/logs', help="path to logs"
     )
     parser.add_argument(
         "--end_iter", type=int, default=3001, help="end_iter"
@@ -314,7 +314,7 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         args.device = 'cuda'
 
-    env = gym.make('LunarLanderContinuous-v2', render_mode=None)
+    env = gym.make('BipedalWalker-v3', render_mode=None)
     model = TD3(env.observation_space.shape[0], env.action_space.shape[0], args.device, actor_lr=args.lr, critic_lr=args.lr)
     if args.path != '':
         model.load(args.path)
