@@ -18,7 +18,7 @@ class PolicyNet(nn.Module):
     def forward(self, state):
         x = nn.functional.relu(self.fc1(state))
         x = nn.functional.relu(self.fc2(x))
-        ret = nn.functional.softmax(self.fc3(x), dim=1)
+        ret = nn.functional.softmax(self.fc3(x), dtype=torch.double, dim=1)
         return ret
 
 
@@ -43,7 +43,7 @@ class PPO:
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr)
 
-        self.device = args.device
+        self.device = device
 
     def select_action(self, state):
         state = torch.tensor(state).view(-1, len(state)).to(self.device)
@@ -176,8 +176,6 @@ def train(agent: PPO, env, args):
         if idx % 500 == 0:
             agent.save(args.save_path + f"/{str(idx).zfill(6)}.pt")
 
-    print("done!")
-
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -185,10 +183,10 @@ if __name__ == '__main__':
         "--path", type=str, default='', help="path of model"
     )
     parser.add_argument(
-        "--save_path", type=str, default='MountainCar-v0/checkpoint', help="path to save"
+        "--save_path", type=str, default='CartPole-v1/checkpoint', help="path to save"
     )
     parser.add_argument(
-        "--logs_path", type=str, default='MountainCar-v0/logs', help="path to logs"
+        "--logs_path", type=str, default='CartPole-v1/logs', help="path to logs"
     )
     parser.add_argument(
         "--end_iter", type=int, default=3001, help="end_iter"
@@ -216,8 +214,8 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         args.device = 'cuda'
 
-    env = gym.make('MountainCar-v0', render_mode=None)
-    model = PPO(env.observation_space.shape[0], 2, args.device, args.lr)
+    env = gym.make('CartPole-v1', render_mode=None)
+    model = PPO(env.observation_space.shape[0], env.action_space.n, args.device, args.lr)
     if args.path != '':
         model.load(args.path)
 

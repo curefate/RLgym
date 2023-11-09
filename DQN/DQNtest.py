@@ -10,9 +10,15 @@ if __name__ == '__main__':
 
     env = gym.make('CartPole-v1', render_mode="human")
     state, info = env.reset()
-    for i in range(99999):
-        action = model(torch.tensor(state).view(-1, 4).to(device)).max(1)[1].item()
-        state, reward, terminated, truncated, info = env.step(action)
-        print("{}th steps, reward={}, action={}".format(i, reward, action))
-        if terminated or truncated:
-            break
+    for iters in range(10):
+        done = False
+        state, info = env.reset()
+        total_reward = 0
+        while not done:
+            action = model(torch.tensor(state).view(-1, 4).to(device)).max(1)[1].item()
+            state, reward, terminated, truncated, info = env.step(action)
+            total_reward += reward
+            if terminated or truncated:
+                done = True
+
+        print("{}th test, total reward={}".format(iters, total_reward))
