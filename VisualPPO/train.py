@@ -102,7 +102,7 @@ if __name__ == '__main__':
         args.device = 'cuda'
 
     env = gym.make('LunarLander-v2', render_mode="human")
-    model = vPPO(env.observation_space.shape[0], env.action_space.n, args.device, args.lr)
+    model = vPPO(512, env.action_space.n, args.device, args.lr)
     if args.path != '':
         model.load(args.path)
 

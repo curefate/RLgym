@@ -44,7 +44,7 @@ class VisualBlock(nn.Module):
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, state_dim=, action_dim):
+    def __init__(self, state_dim, action_dim):
         super().__init__()
         self.res1 = VisualBlock(3, 4)
         self.res2 = VisualBlock(4, 6)
@@ -57,7 +57,8 @@ class PolicyNet(nn.Module):
         x = self.res3(self.res2(self.res1(state))).view(-1)
         x = nn.functional.relu(self.fc1(x))
         x = nn.functional.relu(self.fc2(x))
-        ret = nn.functional.softmax(self.fc3(x), dtype=torch.double, dim=1)
+        ret = nn.functional.softmax(self.fc3(x), dtype=torch.double)
+        print(ret.shape)
         return ret
 
 
@@ -90,7 +91,7 @@ class vPPO:
         self.device = device
 
     def select_action(self, state):
-        state = torch.tensor(state).view(-1, len(state)).to(self.device)
+        state = state.to(self.device)
         probs = self.actor(state)
         action_list = torch.distributions.Categorical(probs)
         action = action_list.sample().item()
@@ -172,19 +173,16 @@ if __name__ == '__main__':
     env = gym.make('LunarLander-v2', render_mode="human")
 
     device = "cuda"
-    model = vPPO(env.observation_space.shape[0], env.action_space.n, device)
+    model = vPPO(512, env.action_space.n, device)
     # model.load("CartPole-v1/checkpoint/002000.pt")
     for iters in range(10):
         done = False
         state, info = env.reset()
         total_reward = 0
-        temp = fetch_image()
-        temp.save("test.png")
-        temp = model.img2tensor(temp)
-        print(temp.shape)
         while not done:
+            state = model.img2tensor(fetch_image())
             action = model.select_action(state)
-            state, reward, terminated, truncated, info = env.step(action)
+            _, reward, terminated, truncated, info = env.step(action)
             total_reward += reward
             if terminated or truncated:
                 done = True
