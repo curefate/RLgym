@@ -54,11 +54,11 @@ class PolicyNet(nn.Module):
         self.fc3 = nn.Linear(256, action_dim)
 
     def forward(self, state):
-        x = self.res3(self.res2(self.res1(state))).view(-1)
+        batch, _, _, _ = state.shape
+        x = self.res3(self.res2(self.res1(state))).view(batch, -1)
         x = nn.functional.relu(self.fc1(x))
         x = nn.functional.relu(self.fc2(x))
         ret = nn.functional.softmax(self.fc3(x), dtype=torch.double)
-        print(ret.shape)
         return ret
 
 
@@ -73,8 +73,10 @@ class ValueNet(nn.Module):
         self.fc3 = nn.Linear(256, 1)
 
     def forward(self, state):
-        x = self.res3(self.res2(self.res1(state))).view(-1)
-        x = nn.functional.relu(self.fc1(x))
+        batch, _, _, _ = state.shape
+        x = self.res3(self.res2(self.res1(state))).view(batch, -1)
+        x = self.fc1(x)
+        x = nn.functional.relu(x)
         x = nn.functional.relu(self.fc2(x))
         ret = self.fc3(x)
         return ret
@@ -91,6 +93,8 @@ class vPPO:
         self.device = device
 
     def select_action(self, state):
+        if len(state.shape) is 3:
+            state = state[None, :, :, :]
         state = state.to(self.device)
         probs = self.actor(state)
         action_list = torch.distributions.Categorical(probs)
@@ -98,10 +102,12 @@ class vPPO:
         return action
 
     def optimize(self, transition_dict, gamma, lmbda, eps, epochs):
-        states = torch.tensor(transition_dict['states'], dtype=torch.float).to(self.device)
         actions = torch.tensor(transition_dict['actions']).to(self.device).view(-1, 1)
+        states = torch.tensor([item.cpu().detach().numpy() for item in transition_dict['states']],
+                              dtype=torch.float).to(self.device)
         rewards = torch.tensor(transition_dict['rewards'], dtype=torch.float).to(self.device).view(-1, 1)
-        next_states = torch.tensor(transition_dict['next_states'], dtype=torch.float).to(self.device)
+        next_states = torch.tensor([item.cpu().detach().numpy() for item in transition_dict['next_states']],
+                                   dtype=torch.float).to(self.device)
         dones = torch.tensor(transition_dict['dones'], dtype=torch.float).to(self.device).view(-1, 1)
 
         # calculate TD
@@ -170,28 +176,28 @@ class vPPO:
 
 
 if __name__ == '__main__':
-    env = gym.make('LunarLander-v2', render_mode="human")
+    # env = gym.make('LunarLander-v2', render_mode="human")
+    #
+    # device = "cuda"
+    # model = vPPO(512, env.action_space.n, device)
+    # # model.load("CartPole-v1/checkpoint/002000.pt")
+    # for iters in range(10):
+    #     done = False
+    #     state, info = env.reset()
+    #     total_reward = 0
+    #     while not done:
+    #         state = model.img2tensor(fetch_image())
+    #         action = model.select_action(state)
+    #         _, reward, terminated, truncated, info = env.step(action)
+    #         total_reward += reward
+    #         if terminated or truncated:
+    #             done = True
+    #
+    #     print("{}th test, total reward={}".format(iters, total_reward))
 
-    device = "cuda"
-    model = vPPO(512, env.action_space.n, device)
-    # model.load("CartPole-v1/checkpoint/002000.pt")
-    for iters in range(10):
-        done = False
-        state, info = env.reset()
-        total_reward = 0
-        while not done:
-            state = model.img2tensor(fetch_image())
-            action = model.select_action(state)
-            _, reward, terminated, truncated, info = env.step(action)
-            total_reward += reward
-            if terminated or truncated:
-                done = True
-
-        print("{}th test, total reward={}".format(iters, total_reward))
-
-    # sample = torch.randn(3, 600, 400)
-    # res1 = VisualBlock(3, 4)
-    # res2 = VisualBlock(4, 6)
-    # res3 = VisualBlock(6, 8)
-    # out = res3(res2(res1(sample))).view(-1)
-    # print(out.shape) # torch.Size([30000])
+    sample = torch.randn(8, 3, 600, 400)
+    res1 = VisualBlock(3, 4)
+    res2 = VisualBlock(4, 6)
+    res3 = VisualBlock(6, 8)
+    out = res3(res2(res1(sample))).view(8, -1)
+    print(out.shape)  # torch.Size([30000])
