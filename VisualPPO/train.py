@@ -27,15 +27,20 @@ def train(agent: vPPO, env, args):
         }
 
         # reset state
-        _, info = env.reset()
-        state = model.img2tensor(fetch_image())
+        state, info = env.reset()
+        state = model.img2tensor(state)
+        print(type(state))
+        print(state.shape)
+        # screen = model.img2tensor(fetch_image())
+        # state = model.screen2state(screen)
         done = False
         total_reward = 0
 
         while not done:
             action = agent.select_action(state)
-            _, reward, terminated, truncated, info = env.step(action)
-            next_state = model.img2tensor(fetch_image())
+            next_state, reward, terminated, truncated, info = env.step(action)
+            # next_screen = model.img2tensor(fetch_image())
+            # next_state = model.screen2state(next_screen)
             if terminated or truncated:
                 done = True
 
@@ -58,7 +63,7 @@ def train(agent: vPPO, env, args):
         logs.add_scalar("average critic loss", avg_critic_loss, idx)
 
         # save
-        if idx % 500 == 0:
+        if idx % 100 == 0:
             if not os.path.exists(args.save_path):
                 os.mkdir(args.save_path)
             agent.save(args.save_path + f"/{str(idx).zfill(6)}.pt")
@@ -76,7 +81,7 @@ if __name__ == '__main__':
         "--logs_path", type=str, default='LunarLander-v2/logs', help="path to logs"
     )
     parser.add_argument(
-        "--end_iter", type=int, default=3001, help="end_iter"
+        "--end_iter", type=int, default=5001, help="end_iter"
     )
     parser.add_argument(
         "--start_iter", type=int, default=0, help="start_iter"
@@ -101,7 +106,7 @@ if __name__ == '__main__':
     if torch.cuda.is_available():
         args.device = 'cuda'
 
-    env = gym.make('LunarLander-v2', render_mode="human")
+    env = gym.make('ALE/Assault-v5', render_mode="human")
     model = vPPO(512, env.action_space.n, args.device, args.lr)
     if args.path != '':
         model.load(args.path)

@@ -43,20 +43,31 @@ class VisualBlock(nn.Module):
         return out
 
 
-class PolicyNet(nn.Module):
-    def __init__(self, state_dim, action_dim):
+class VisualNet(nn.Module):
+    def __init__(self):
         super().__init__()
         self.res1 = VisualBlock(3, 4)
         self.res2 = VisualBlock(4, 6)
         self.res3 = VisualBlock(6, 8)
+
+    def forward(self, screen):
+        if len(screen.shape) is 3:
+            out = self.res3(self.res2(self.res1(screen))).view(-1)
+        else:
+            batch, _, _, _ = screen.shape
+            out = self.res3(self.res2(self.res1(screen))).view(batch, -1)
+        return out
+
+
+class PolicyNet(nn.Module):
+    def __init__(self, state_dim, action_dim):
+        super().__init__()
         self.fc1 = nn.Linear(30000, state_dim)
         self.fc2 = nn.Linear(state_dim, 256)
         self.fc3 = nn.Linear(256, action_dim)
 
     def forward(self, state):
-        batch, _, _, _ = state.shape
-        x = self.res3(self.res2(self.res1(state))).view(batch, -1)
-        x = nn.functional.relu(self.fc1(x))
+        x = nn.functional.relu(self.fc1(state))
         x = nn.functional.relu(self.fc2(x))
         ret = nn.functional.softmax(self.fc3(x), dtype=torch.double)
         return ret
@@ -65,17 +76,12 @@ class PolicyNet(nn.Module):
 class ValueNet(nn.Module):
     def __init__(self, state_dim):
         super().__init__()
-        self.res1 = VisualBlock(3, 4)
-        self.res2 = VisualBlock(4, 6)
-        self.res3 = VisualBlock(6, 8)
         self.fc1 = nn.Linear(30000, state_dim)
         self.fc2 = nn.Linear(state_dim, 256)
         self.fc3 = nn.Linear(256, 1)
 
     def forward(self, state):
-        batch, _, _, _ = state.shape
-        x = self.res3(self.res2(self.res1(state))).view(batch, -1)
-        x = self.fc1(x)
+        x = self.fc1(state)
         x = nn.functional.relu(x)
         x = nn.functional.relu(self.fc2(x))
         ret = self.fc3(x)
@@ -90,11 +96,10 @@ class vPPO:
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr)
 
         self.img2tensor = torchvision.transforms.ToTensor()
+        self.screen2state = VisualNet()
         self.device = device
 
     def select_action(self, state):
-        if len(state.shape) is 3:
-            state = state[None, :, :, :]
         state = state.to(self.device)
         probs = self.actor(state)
         action_list = torch.distributions.Categorical(probs)
