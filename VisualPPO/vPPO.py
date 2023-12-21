@@ -60,10 +60,10 @@ class VisualNet(nn.Module):
 
 
 class PolicyNet(nn.Module):
-    def __init__(self, state_dim, action_dim):
+    def __init__(self, action_dim):
         super().__init__()
-        self.fc1 = nn.Linear(30000, state_dim)
-        self.fc2 = nn.Linear(state_dim, 256)
+        self.fc1 = nn.Linear(1000, 512)
+        self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, action_dim)
 
     def forward(self, state):
@@ -74,10 +74,10 @@ class PolicyNet(nn.Module):
 
 
 class ValueNet(nn.Module):
-    def __init__(self, state_dim):
+    def __init__(self):
         super().__init__()
-        self.fc1 = nn.Linear(30000, state_dim)
-        self.fc2 = nn.Linear(state_dim, 256)
+        self.fc1 = nn.Linear(1024, 512)
+        self.fc2 = nn.Linear(512, 256)
         self.fc3 = nn.Linear(256, 1)
 
     def forward(self, state):
@@ -89,9 +89,9 @@ class ValueNet(nn.Module):
 
 
 class vPPO:
-    def __init__(self, state_dim, action_dim, device, lr=3e-4):
-        self.actor = PolicyNet(state_dim, action_dim).to(device)
-        self.critic = ValueNet(state_dim).to(device)
+    def __init__(self, action_dim, device, lr=3e-4):
+        self.actor = PolicyNet(action_dim).to(device)
+        self.critic = ValueNet().to(device)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr)
 
@@ -200,9 +200,7 @@ if __name__ == '__main__':
     #
     #     print("{}th test, total reward={}".format(iters, total_reward))
 
-    sample = torch.randn(8, 3, 600, 400)
-    res1 = VisualBlock(3, 4)
-    res2 = VisualBlock(4, 6)
-    res3 = VisualBlock(6, 8)
-    out = res3(res2(res1(sample))).view(8, -1)
-    print(out.shape)  # torch.Size([30000])
+    model = torchvision.models.convnext_base()
+    sample = torch.ones(4, 3, 210, 160)
+    out = model(sample)
+    print(out.shape)
