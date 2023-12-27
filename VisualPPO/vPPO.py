@@ -67,7 +67,7 @@ class vPPOtrainer():
         states_dict = torch.tensor([item.cpu().detach().numpy() for item in transition_dict['states']],
                               dtype=torch.float).to(self.device)
         rewards_dict = torch.tensor(transition_dict['rewards'], dtype=torch.float).to(self.device).view(-1, 1)
-        dones_dict = torch.tensor(transition_dict['dones'], dtype=torch.float).to(self.device).view(-1, 1)
+        values_dict = torch.tensor(transition_dict['values'], dtype=torch.float).to(self.device).view(-1, 1)
         advantages_dict = torch.tensor(transition_dict['advantages'], dtype=torch.float).to(self.device).view(-1, 1)
         log_probs_dict = torch.tensor(transition_dict['log_probs'], dtype=torch.float).to(self.device).view(-1, 1)
 
@@ -95,11 +95,31 @@ class vPPOtrainer():
 
                 # Value loss
                 if args.clip_vloss:
-                    # todo
-                    print()
+                    loss_value_unclipped = (value - rewards_dict[counter]) ** 2
+                    loss_value_clipped = values_dict[counter] + torch.clamp(
+                        value - values_dict[counter],
+                        -eps, eps
+                    )
+                    loss_value_clipped = (loss_value_clipped - rewards_dict[counter]) ** 2
+                    loss_value = .5 * torch.max(loss_value_unclipped, loss_value_clipped).mean()
                 else:
-                    loss_critic =
+                    loss_value = .5 * ((value - rewards_dict[counter]) ** 2).mean() # MSE loss
 
+                # Entropy
+                loss_entropy = entropy.mean()
+
+                # Loss
+                loss = loss_policy + args.lossv_coef * loss_value + args.losse_coef * loss_entropy
+
+                # optimize
+                self.optimizer.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm(self.agent.parameters(), args.max_grad_norm)
+                self.optimizer.step()
+
+        return loss
+
+    def train(self, env):
 
 
 if __name__ == '__main__':
