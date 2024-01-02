@@ -20,13 +20,13 @@ def layer_init(layer, std=np.sqrt(2), bias_const=.0):
 
 def make_env(gym_id, seed, idx, capture_video, run_name):
     def thunk():
-        env = gym.make(gym_id)
+        env = gym.make(gym_id, render_mode=None)
         # env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         # env = gym.wrappers.ResizeObservation(env, (84, 84))
-        # env = gym.wrappers.GrayScaleObservation(env)
+        env = gym.wrappers.GrayScaleObservation(env)
         # env = gym.wrappers.FrameStack(env, 4)
         env.seed(seed)
         env.action_space.seed(seed)
@@ -112,13 +112,13 @@ def train(agent: vPPO, envs, args):
     # Start
     next_obs, _ = envs.reset()
     next_obs = torch.tensor(next_obs)[:, None, :, :].to(args.device)
-    action = torch.tensor(0)
+    action = torch.zeros(args.num_envs)
     next_done = torch.zeros(args.num_envs).to(args.device)
     # skip frame
     for i in range(args.num_skip_frame - 1):
-        temp_obs, _, temp_terminated, temp_truncated, _ = envs.step(action.item())
-        next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
-        for d in range(temp_terminated):
+        temp_obs, _, temp_terminated, temp_truncated, _ = envs.step(action.int().tolist())
+        next_obs = torch.cat([next_obs, torch.tensor(temp_obs)[:, None, :, :].to(args.device)], dim=1)
+        for d in range(len(temp_terminated)):
             if temp_terminated[d] or temp_truncated[d]:
                 temp_terminated[d] = True
         next_done = torch.tensor(temp_terminated).to(args.device)
@@ -145,14 +145,14 @@ def train(agent: vPPO, envs, args):
             storage_log_probs[step] = log_probs
             storage_values[step] = value.flatten()
 
-            next_obs, reward, terminated, truncated, _ = envs.step(action.item())
-            next_obs = next_obs[:, None, :, :]
+            next_obs, reward, terminated, truncated, _ = envs.step(action.int().tolist())
+            next_obs = torch.tensor(next_obs)[:, None, :, :].to(args.device)
             # skip frame
             for i in range(args.num_skip_frame - 1):
-                temp_obs, temp_reward, temp_terminated, temp_truncated, info = envs.step(action.item())
-                next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
+                temp_obs, temp_reward, temp_terminated, temp_truncated, _ = envs.step(action.int().tolist())
+                next_obs = torch.cat([next_obs, torch.tensor(temp_obs)[:, None, :, :].to(args.device)], dim=1)
                 reward += temp_reward
-                for d in range(temp_terminated):
+                for d in range(len(temp_terminated)):
                     if temp_terminated[d] or temp_truncated[d]:
                         temp_terminated[d] = True
                 done = temp_terminated
@@ -161,17 +161,9 @@ def train(agent: vPPO, envs, args):
             next_obs = torch.tensor(next_obs).to(args.device)
             next_done = torch.tensor(done).to(args.device)
 
-            # info log
-            for item in info:
-                if "episode" in item.keys():
-                    print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
-                    writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
-                    writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
-                    break
-
         # Learning: Calculate GAE
         with torch.no_grad():
-            next_value = agent.critic(next_obs)
+            next_value = agent.critic(agent.vision(next_obs))
             td_targets = storage_rewards + args.gamma * next_value * (1 - storage_dones)
             td_values = storage_values
             td_delta = (td_targets - td_values).cpu().detach().numpy()
@@ -262,6 +254,12 @@ if __name__ == '__main__':
     new = torch.cat([obs, obs, obs, obs], dim=1)
     print(new.shape)
 
-    agent = vPPO(3)
+    agent = vPPO(7)
     out = agent.select_action(new)
-    print(out)
+    print(out.shape)
+
+    act = [0, 0, 0, 0, 0, 0, 0, 0]
+    act2 = torch.zeros(8)
+    act2 = act2.int().tolist()
+    envs.step(act2)
+    print(type(act2))

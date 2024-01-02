@@ -90,7 +90,7 @@ if __name__ == '__main__':
     )
 
     # model setup
-    agent = vPPO(7)
+    agent = vPPO(envs.single_action_space.n).to(args.device)
 
     train(agent, envs, args)
 
