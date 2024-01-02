@@ -1,7 +1,15 @@
+import time
+
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
+from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
+import argparse
+import os
+
+from tqdm import tqdm
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=.0):
@@ -14,11 +22,11 @@ class vPPO(nn.Module):
     def __init__(self, dim_actions):
         super().__init__()
         self.vision = nn.Sequential(
-            layer_init(nn.Conv2d(4, 32, 8, stride=4)),
+            layer_init(nn.Conv2d(4, 32, (8, 8), stride=(4, 4))),
             nn.ReLU(),
-            layer_init(nn.Conv2d(32, 64, 4, stride=2)),
+            layer_init(nn.Conv2d(32, 64, (4, 4), stride=(2, 2))),
             nn.ReLU(),
-            layer_init(nn.Conv2d(64, 64, 3, stride=1)),
+            layer_init(nn.Conv2d(64, 64, (3, 3), stride=(1, 1))),
             nn.ReLU(),
             nn.Flatten(),
             layer_init(nn.Linear(64 * 22 * 16, 512)),
@@ -30,15 +38,20 @@ class vPPO(nn.Module):
         )
         self.critic = layer_init(nn.Linear(512, 1), std=1)
 
-    def get_value(self, state):
-        return self.critic(self.vision(state))
-
-    def select_action(self, state, action=None):
+    def get_values(self, state, action=None):
+        state = state / 255.
         logits = self.actor(self.vision(state))
         probs = torch.distributions.Categorical(logits)
         if action is None:
-            action = probs.sample().item()
-        return action, probs.log_prob(action), probs.entropy()
+            action = probs.sample()
+        return action, probs.log_prob(action), probs.entropy(), self.critic(self.vision(state))
+
+    def select_action(self, state):
+        state = state / 255.
+        logits = self.actor(self.vision(state))
+        probs = torch.distributions.Categorical(logits)
+        action = probs.sample()
+        return action
 
     def save(self, path):
         torch.save(
@@ -57,20 +70,95 @@ class vPPO(nn.Module):
         self.vision.load_state_dict(ckpt["vision"])
 
 
-class vPPOtrainer():
-    def __init__(self, agent:vPPO, args):
-        self.agent = agent
-        self.optimizer = torch.optim.Adam(self.agent.parameters(), args.lr)
+def train(agent: vPPO, envs, args):
+    # Setup
+    run_name = f"{args.gym_id}__{args.run_name}__{args.seed}__{int(time.time())}"
+    writer = SummaryWriter(f"runs/{run_name}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
 
-    def optimize(self, transition_dict, args):
-        actions_dict = torch.tensor(transition_dict['actions']).to(self.device).view(-1, 1)
-        states_dict = torch.tensor([item.cpu().detach().numpy() for item in transition_dict['states']],
-                              dtype=torch.float).to(self.device)
-        rewards_dict = torch.tensor(transition_dict['rewards'], dtype=torch.float).to(self.device).view(-1, 1)
-        values_dict = torch.tensor(transition_dict['values'], dtype=torch.float).to(self.device).view(-1, 1)
-        advantages_dict = torch.tensor(transition_dict['advantages'], dtype=torch.float).to(self.device).view(-1, 1)
-        log_probs_dict = torch.tensor(transition_dict['log_probs'], dtype=torch.float).to(self.device).view(-1, 1)
+    # Initialize
+    storage_observations = torch.zeros((args.num_rollout_step, args.num_envs) + (args.num_skip_frame, 210, 160)).to(
+        args.device)
+    storage_actions = torch.zeros((args.num_rollout_step, args.num_envs) + envs.single_action_space.shape).to(
+        args.device)
+    storage_log_probs = torch.zeros((args.num_rollout_step, args.num_envs)).to(args.device)
+    storage_rewards = torch.zeros((args.num_rollout_step, args.num_envs)).to(args.device)
+    storage_dones = torch.zeros((args.num_rollout_step, args.num_envs)).to(args.device)
+    storage_values = torch.zeros((args.num_rollout_step, args.num_envs)).to(args.device)
 
+    optimizer = torch.optim.Adam(agent.parameters(), lr=args.lr)
+
+    # Start
+    next_obs, _ = envs.reset()
+    next_obs = torch.tensor(next_obs)[:, None, :, :].to(args.device)
+    action = torch.tensor(0)
+    next_done = torch.zeros(args.num_envs).to(args.device)
+    # skip frame
+    for i in range(3):
+        temp_obs, _, temp_terminated, temp_truncated, _ = envs.step(action.item())
+        next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
+        for d in range(temp_terminated):
+            if temp_terminated[d] or temp_truncated[d]:
+                temp_terminated[d] = True
+        next_done = torch.tensor(temp_terminated).to(args.device)
+
+    global_step = 0  # for log
+    roll_out_times = args.total_time_steps // args.batch_size
+    pbar = tqdm(total=args.total_time_steps)
+    for update in range(1, roll_out_times + 1):
+        # Annealing learning rate
+        if args.anneal_lr:
+            frac = 1. - (update - 1.) / roll_out_times
+            optimizer.param_groups[0]['lr'] = frac * args.lr
+
+        # Rollout
+        for step in range(args.num_rollout_step):
+            pbar.update(1 * args.num_envs)
+            global_step += 1 * args.num_envs
+            storage_observations[step] = next_obs
+            storage_dones[step] = next_done
+
+            with torch.no_grad():
+                action, log_probs, _, value = agent.get_values(next_obs)
+            storage_actions[step] = action
+            storage_log_probs[step] = log_probs
+            storage_values[step] = value.flatten()
+
+            next_obs, reward, terminated, truncated, _ = envs.step(action.item())
+            # skip frame
+            for i in range(3):
+                temp_obs, temp_reward, temp_terminated, temp_truncated, _ = envs.step(action.item())
+                next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
+                reward += temp_reward
+                for d in range(temp_terminated):
+                    if temp_terminated[d] or temp_truncated[d]:
+                        temp_terminated[d] = True
+                done = temp_terminated
+            storage_rewards[step] = torch.tensor(reward).to(args.device).view(-1)
+            # Go next
+            next_obs = torch.tensor(next_obs).to(args.device)
+            next_done = torch.tensor(done).to(args.device)
+
+            # TODO info log
+
+        # Learning: Calculate GAE
+        with torch.no_grad():
+            next_value = agent.critic(next_obs)
+            td_targets = storage_rewards + args.gamma * next_value * (1 - storage_dones)
+            td_values = storage_values
+            td_delta = (td_targets - td_values).cpu().detach().numpy()
+            advantage = 0
+            storage_advantages = []
+            for delta in td_delta[::-1]:  # 逆序时序差分值 axis=1轴上倒着取 [], [], []
+                # GAE
+                advantage = args.gamma * args.lmbda * advantage + delta
+                storage_advantages.append(advantage)
+            storage_advantages = torch.tensor(storage_advantages.reverse(), dtype=torch.float).to(args.device)
+
+        # Learning: Optimize
         sep_counts = np.arange(args.batch_size)
         for epoch in range(args.epochs):
             np.random.shuffle(sep_counts)
@@ -78,10 +166,11 @@ class vPPOtrainer():
                 end = start + args.minibatch_size
                 counter = sep_counts[start:end]
 
-                _, log_probs, entropy = self.agent.select_action(states_dict[counter], actions_dict[counter])
-                value = self.agent.get_value(states_dict[counter]).view(-1)
-                ratio = torch.exp(log_probs - log_probs_dict[counter])
-                advantages = advantages_dict[counter]
+                _, log_probs, entropy, value = agent.get_values(storage_observations[counter],
+                                                                storage_actions[counter])
+                # value = value.view(-1)
+                ratio = torch.exp(log_probs - storage_log_probs[counter])
+                advantages = storage_advantages[counter]
                 if args.norm_adv:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -90,20 +179,22 @@ class vPPOtrainer():
                 # 近端策略优化裁剪目标函数公式的左侧项
                 loss_policy1 = -advantages * ratio
                 # 公式的右侧项，裁剪ratio
-                loss_policy2 = -advantages * torch.clamp(ratio, 1-eps, 1+eps)
+                loss_policy2 = -advantages * torch.clamp(ratio, 1 - eps, 1 + eps)
                 loss_policy = torch.max(loss_policy1, loss_policy2).mean()
 
                 # Value loss
                 if args.clip_vloss:
-                    loss_value_unclipped = (value - rewards_dict[counter]) ** 2
-                    loss_value_clipped = values_dict[counter] + torch.clamp(
-                        value - values_dict[counter],
+                    loss_value_unclipped = (value - (storage_advantages[counter] + storage_values[counter])) ** 2
+                    loss_value_clipped = storage_values[counter] + torch.clamp(
+                        value - storage_values[counter],
                         -eps, eps
                     )
-                    loss_value_clipped = (loss_value_clipped - rewards_dict[counter]) ** 2
+                    loss_value_clipped = (loss_value_clipped - (
+                            storage_advantages[counter] + storage_values[counter])) ** 2
                     loss_value = .5 * torch.max(loss_value_unclipped, loss_value_clipped).mean()
                 else:
-                    loss_value = .5 * ((value - rewards_dict[counter]) ** 2).mean() # MSE loss
+                    loss_value = .5 * ((value - (
+                            storage_advantages[counter] + storage_values[counter])) ** 2).mean()  # MSE loss
 
                 # Entropy
                 loss_entropy = entropy.mean()
@@ -112,14 +203,10 @@ class vPPOtrainer():
                 loss = loss_policy + args.lossv_coef * loss_value + args.losse_coef * loss_entropy
 
                 # optimize
-                self.optimizer.zero_grad()
+                optimizer.zero_grad()
                 loss.backward()
-                nn.utils.clip_grad_norm(self.agent.parameters(), args.max_grad_norm)
-                self.optimizer.step()
-
-        return loss
-
-    def train(self, env):
+                nn.utils.clip_grad_norm(agent.parameters(), args.max_grad_norm)
+                optimizer.step()
 
 
 if __name__ == '__main__':
@@ -128,8 +215,15 @@ if __name__ == '__main__':
     # out = model(sample)
     # print(out.shape)
 
-    sample = torch.ones(3,3)
-    obs = torch.zeros((4, 2) + sample.shape)
+    envs = gym.vector.SyncVectorEnv([
+        lambda: gym.make("ALE/Assault-v5", obs_type="grayscale") for i in range(8)
+    ])
+    obs, info = envs.reset()
+    obs = torch.tensor(obs)[:, None, :, :]
     print(obs.shape)
-    obs[1] = sample
-    obs[3] = sample
+    new = torch.cat([obs, obs, obs, obs], dim=1)
+    print(new.shape)
+
+    agent = vPPO(3)
+    out = agent.select_action(new)
+    print(out)
