@@ -6,6 +6,8 @@ import gymnasium as gym
 import numpy as np
 import torch
 
+from VisualPPO.vPPO import make_env, vPPO, train
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -28,10 +30,13 @@ if __name__ == '__main__':
         "--num_envs", type=int, default=8, help="environments number"
     )
     parser.add_argument(
-        "--total_time_steps", type=int, default=10000000, help=""
+        "--num_total_time_steps", type=int, default=10000000, help=""
     )
     parser.add_argument(
         "--num_rollout_step", type=int, default=128, help=""
+    )
+    parser.add_argument(
+        "--num_epochs", type=int, default=4, help=""
     )
     parser.add_argument(
         "--minibatch_size", type=int, default=4, help=""
@@ -53,12 +58,6 @@ if __name__ == '__main__':
     )
     parser.add_argument(
         "--anneal_lr", type=bool, default=True, help="if anneal learning rate"
-    )
-    parser.add_argument(
-        "--end_iter", type=int, default=3001, help="end_iter"
-    )
-    parser.add_argument(
-        "--start_iter", type=int, default=0, help="start_iter"
     )
     parser.add_argument(
         "--lr", type=float, default=2.5e-4, help="learning rate"
@@ -84,5 +83,12 @@ if __name__ == '__main__':
     # env setup
     run_name = f"{args.gym_id}__{args.run_name}__{args.seed}__{int(time.time())}"
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.gym_id, args.seed + i, i, args.capture_video, run_name) for i in range(args.num_envs)]
+        [make_env(args.gym_id, args.seed + i, i, False, run_name) for i in range(args.num_envs)]
     )
+
+    # model setup
+    agent = vPPO(envs.action_space.n)
+
+    train(agent, envs, args)
+
+    envs.close()

@@ -18,6 +18,24 @@ def layer_init(layer, std=np.sqrt(2), bias_const=.0):
     return layer
 
 
+def make_env(gym_id, seed, idx, capture_video, run_name):
+    def thunk():
+        env = gym.make(gym_id)
+        # env = gym.wrappers.RecordEpisodeStatistics(env)
+        if capture_video:
+            if idx == 0:
+                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
+        # env = gym.wrappers.ResizeObservation(env, (84, 84))
+        # env = gym.wrappers.GrayScaleObservation(env)
+        # env = gym.wrappers.FrameStack(env, 4)
+        env.seed(seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
+        return env
+
+    return thunk
+
+
 class vPPO(nn.Module):
     def __init__(self, dim_actions):
         super().__init__()
@@ -106,8 +124,8 @@ def train(agent: vPPO, envs, args):
         next_done = torch.tensor(temp_terminated).to(args.device)
 
     global_step = 0  # for log
-    roll_out_times = args.total_time_steps // args.batch_size
-    pbar = tqdm(total=args.total_time_steps)
+    roll_out_times = args.num_total_time_steps // args.batch_size
+    pbar = tqdm(total=args.num_total_time_steps)
     for update in range(1, roll_out_times + 1):
         # Annealing learning rate
         if args.anneal_lr:
@@ -128,9 +146,10 @@ def train(agent: vPPO, envs, args):
             storage_values[step] = value.flatten()
 
             next_obs, reward, terminated, truncated, _ = envs.step(action.item())
+            next_obs = next_obs[:, None, :, :]
             # skip frame
             for i in range(3):
-                temp_obs, temp_reward, temp_terminated, temp_truncated, _ = envs.step(action.item())
+                temp_obs, temp_reward, temp_terminated, temp_truncated, info = envs.step(action.item())
                 next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
                 reward += temp_reward
                 for d in range(temp_terminated):
@@ -142,7 +161,13 @@ def train(agent: vPPO, envs, args):
             next_obs = torch.tensor(next_obs).to(args.device)
             next_done = torch.tensor(done).to(args.device)
 
-            # TODO info log
+            # info log
+            for item in info:
+                if "episode" in item.keys():
+                    print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
+                    writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
+                    writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
+                    break
 
         # Learning: Calculate GAE
         with torch.no_grad():
@@ -160,7 +185,7 @@ def train(agent: vPPO, envs, args):
 
         # Learning: Optimize
         sep_counts = np.arange(args.batch_size)
-        for epoch in range(args.epochs):
+        for epoch in range(args.num_epochs):
             np.random.shuffle(sep_counts)
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
@@ -207,6 +232,19 @@ def train(agent: vPPO, envs, args):
                 loss.backward()
                 nn.utils.clip_grad_norm(agent.parameters(), args.max_grad_norm)
                 optimizer.step()
+
+        # log
+        writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
+        writer.add_scalar("losses/value_loss", loss_value.item(), global_step)
+        writer.add_scalar("losses/policy_loss", loss_policy.item(), global_step)
+        writer.add_scalar("losses/entropy", loss_entropy.item(), global_step)
+
+        # save
+        if global_step % 5000 == 0:
+            agent.save("ckpt/" + run_name + f"_{str(global_step).zfill(6)}.pt")
+
+    writer.close()
+    return
 
 
 if __name__ == '__main__':
