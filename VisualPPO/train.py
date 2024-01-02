@@ -17,7 +17,7 @@ if __name__ == '__main__':
         "--gym_id", type=str, default='Assault-v5', help=""
     )
     parser.add_argument(
-        "--exp_name", type=str, default='default_run_name', help=""
+        "--exp_name", type=str, default='default_exp_name', help=""
     )
     parser.add_argument(
         "--already_trained_times", type=int, default=0, help=""
@@ -84,7 +84,7 @@ if __name__ == '__main__':
     torch.manual_seed(args.seed)
 
     # env setup
-    run_name = f"{args.gym_id}__{args.run_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     envs = gym.vector.SyncVectorEnv(
         [make_env('ALE/Assault-v5', args.seed + i, i, False, run_name) for i in range(args.num_envs)]
     )
