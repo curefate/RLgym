@@ -90,7 +90,7 @@ class vPPO(nn.Module):
 
 def train(agent: vPPO, envs, args):
     # Setup
-    run_name = f"{args.gym_id}__{args.run_name}__{args.seed}__{int(time.time())}"
+    run_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     writer = SummaryWriter(f"runs/{run_name}")
     writer.add_text(
         "hyperparameters",
@@ -233,7 +233,10 @@ def train(agent: vPPO, envs, args):
 
         # save
         if global_step % 5000 == 0:
-            agent.save("ckpt/" + run_name + f"_{str(global_step).zfill(6)}.pt")
+            path = "ckpt/"
+            if not os.path.exists(path):
+                os.mkdir(path)
+            agent.save(path + run_name + f"_{str(global_step).zfill(6)}.pt")
 
     writer.close()
     return

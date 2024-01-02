@@ -14,10 +14,10 @@ if __name__ == '__main__':
         "--path", type=str, default='', help="path of model"
     )
     parser.add_argument(
-        "--gym_id", type=str, default='ALE/Assault-v5', help=""
+        "--gym_id", type=str, default='Assault-v5', help=""
     )
     parser.add_argument(
-        "--run_name", type=str, default='default_run_name', help=""
+        "--exp_name", type=str, default='default_run_name', help=""
     )
     parser.add_argument(
         "--already_trained_times", type=int, default=0, help=""
@@ -86,7 +86,7 @@ if __name__ == '__main__':
     # env setup
     run_name = f"{args.gym_id}__{args.run_name}__{args.seed}__{int(time.time())}"
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.gym_id, args.seed + i, i, False, run_name) for i in range(args.num_envs)]
+        [make_env('ALE/Assault-v5', args.seed + i, i, False, run_name) for i in range(args.num_envs)]
     )
 
     # model setup
