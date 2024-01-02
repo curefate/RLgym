@@ -163,7 +163,7 @@ def train(agent: vPPO, envs, args):
 
         # Learning: Calculate GAE
         with torch.no_grad():
-            next_value = agent.critic(agent.vision(next_obs))
+            _, _, _, next_value = agent.get_values(next_obs)
             td_targets = storage_rewards + args.gamma * next_value * (1 - storage_dones)
             td_values = storage_values
             td_delta = (td_targets - td_values).cpu().detach().numpy()
