@@ -40,7 +40,7 @@ class vPPO(nn.Module):
     def __init__(self, dim_actions):
         super().__init__()
         self.vision = nn.Sequential(
-            layer_init(nn.Conv2d(4, 32, (8, 8), stride=(4, 4))),
+            layer_init(nn.Conv2d(1, 32, (8, 8), stride=(4, 4))),
             nn.ReLU(),
             layer_init(nn.Conv2d(32, 64, (4, 4), stride=(2, 2))),
             nn.ReLU(),
@@ -111,17 +111,17 @@ def train(agent: vPPO, envs, args):
 
     # Start
     next_obs, _ = envs.reset()
+    # action = torch.zeros(args.num_envs)
     next_obs = torch.tensor(next_obs)[:, None, :, :].to(args.device)
-    action = torch.zeros(args.num_envs)
-    next_done = torch.zeros(args.num_envs).to(args.device)
     # skip frame
-    for i in range(args.num_skip_frame - 1):
-        temp_obs, _, temp_terminated, temp_truncated, _ = envs.step(action.int().tolist())
-        next_obs = torch.cat([next_obs, torch.tensor(temp_obs)[:, None, :, :].to(args.device)], dim=1)
-        for d in range(len(temp_terminated)):
-            if temp_terminated[d] or temp_truncated[d]:
-                temp_terminated[d] = True
-        next_done = torch.tensor(temp_terminated).to(args.device)
+    # for i in range(args.num_skip_frame - 1):
+    #     temp_obs, _, temp_terminated, temp_truncated, _ = envs.step(action.int().tolist())
+    #     next_obs = torch.cat([next_obs, torch.tensor(temp_obs)[:, None, :, :].to(args.device)], dim=1)
+    #     for d in range(len(temp_terminated)):
+    #         if temp_terminated[d] or temp_truncated[d]:
+    #             temp_terminated[d] = True
+    #     next_done = torch.tensor(temp_terminated).to(args.device)
+    next_done = torch.zeros(args.num_envs)
 
     global_step = 0  # for log
     roll_out_times = args.num_total_time_steps // args.batch_size
@@ -146,25 +146,30 @@ def train(agent: vPPO, envs, args):
             storage_values[step] = value.flatten()
 
             next_obs, reward, terminated, truncated, _ = envs.step(action.int().tolist())
+            for d in range(len(terminated)):
+                if terminated[d] or truncated[d]:
+                    terminated[d] = True
+            done = terminated
             next_obs = torch.tensor(next_obs)[:, None, :, :].to(args.device)
             # skip frame
-            for i in range(args.num_skip_frame - 1):
-                temp_obs, temp_reward, temp_terminated, temp_truncated, _ = envs.step(action.int().tolist())
-                next_obs = torch.cat([next_obs, torch.tensor(temp_obs)[:, None, :, :].to(args.device)], dim=1)
-                reward += temp_reward
-                for d in range(len(temp_terminated)):
-                    if temp_terminated[d] or temp_truncated[d]:
-                        temp_terminated[d] = True
-                done = temp_terminated
+            # for i in range(args.num_skip_frame - 1):
+            #     temp_obs, temp_reward, temp_terminated, temp_truncated, info = envs.step(action.int().tolist())
+            #     next_obs = torch.cat([next_obs, torch.tensor(temp_obs)[:, None, :, :].to(args.device)], dim=1)
+            #     reward += temp_reward
+            #     for d in range(len(temp_terminated)):
+            #         if temp_terminated[d] or temp_truncated[d]:
+            #             temp_terminated[d] = True
+            #     done = temp_terminated
             storage_rewards[step] = torch.tensor(reward).to(args.device).view(-1)
             # Go next
-            next_obs = torch.tensor(next_obs).to(args.device)
             next_done = torch.tensor(done).to(args.device)
+
+        # todo
 
         # Learning: Calculate GAE
         with torch.no_grad():
             _, _, _, next_value = agent.get_values(next_obs)
-            td_targets = storage_rewards + args.gamma * next_value * (1 - storage_dones)
+            td_targets = storage_rewards + args.gamma * next_value.view(-1, args.num_envs) * (1 - storage_dones)
             td_values = storage_values
             td_delta = (td_targets - td_values).cpu().detach().numpy()
             advantage = 0
@@ -173,7 +178,15 @@ def train(agent: vPPO, envs, args):
                 # GAE
                 advantage = args.gamma * args.lmbda * advantage + delta
                 storage_advantages.append(advantage)
-            storage_advantages = torch.tensor(storage_advantages.reverse(), dtype=torch.float).to(args.device)
+            storage_advantages.reverse()
+            storage_advantages = torch.tensor(storage_advantages, dtype=torch.float).to(args.device)
+
+        # Reshape storage
+        storage_opt_observations = storage_observations.reshape((-1,) + (args.num_skip_frame, 210, 160))
+        storage_opt_log_probs = storage_log_probs.reshape(-1)
+        storage_opt_advantages = storage_advantages.reshape(-1)
+        storage_opt_actions = storage_actions.reshape((-1,) + envs.single_action_space.shape)
+        storage_opt_values = storage_values.reshape(-1)
 
         # Learning: Optimize
         sep_counts = np.arange(args.batch_size)
@@ -181,13 +194,13 @@ def train(agent: vPPO, envs, args):
             np.random.shuffle(sep_counts)
             for start in range(0, args.batch_size, args.minibatch_size):
                 end = start + args.minibatch_size
-                counter = sep_counts[start:end]
+                idx = sep_counts[start:end]
 
-                _, log_probs, entropy, value = agent.get_values(storage_observations[counter],
-                                                                storage_actions[counter])
+                _, log_probs, entropy, value = agent.get_values(storage_opt_observations[idx],
+                                                                storage_opt_actions[idx])
                 # value = value.view(-1)
-                ratio = torch.exp(log_probs - storage_log_probs[counter])
-                advantages = storage_advantages[counter]
+                ratio = torch.exp(log_probs - storage_opt_log_probs[idx])
+                advantages = storage_opt_advantages[idx]
                 if args.norm_adv:
                     advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -201,17 +214,17 @@ def train(agent: vPPO, envs, args):
 
                 # Value loss
                 if args.clip_vloss:
-                    loss_value_unclipped = (value - (storage_advantages[counter] + storage_values[counter])) ** 2
-                    loss_value_clipped = storage_values[counter] + torch.clamp(
-                        value - storage_values[counter],
+                    loss_value_unclipped = (value - (storage_opt_advantages[idx] + storage_opt_values[idx])) ** 2
+                    loss_value_clipped = storage_opt_values[idx] + torch.clamp(
+                        value - storage_opt_values[idx],
                         -eps, eps
                     )
                     loss_value_clipped = (loss_value_clipped - (
-                            storage_advantages[counter] + storage_values[counter])) ** 2
+                            storage_opt_advantages[idx] + storage_opt_values[idx])) ** 2
                     loss_value = .5 * torch.max(loss_value_unclipped, loss_value_clipped).mean()
                 else:
                     loss_value = .5 * ((value - (
-                            storage_advantages[counter] + storage_values[counter])) ** 2).mean()  # MSE loss
+                            storage_opt_advantages[idx] + storage_opt_values[idx])) ** 2).mean()  # MSE loss
 
                 # Entropy
                 loss_entropy = entropy.mean()
@@ -232,11 +245,11 @@ def train(agent: vPPO, envs, args):
         writer.add_scalar("losses/entropy", loss_entropy.item(), global_step)
 
         # save
-        if global_step % 5000 == 0:
+        if global_step % (args.num_rollout_step * args.num_envs * 100) == 0:
             path = "ckpt/"
             if not os.path.exists(path):
                 os.mkdir(path)
-            agent.save(path + run_name + f"_{str(global_step).zfill(6)}.pt")
+            agent.save(path + run_name + f"_{str(global_step + args.already_trained_times).zfill(6)}.pt")
 
     writer.close()
     return
@@ -264,5 +277,8 @@ if __name__ == '__main__':
     act = [0, 0, 0, 0, 0, 0, 0, 0]
     act2 = torch.zeros(8)
     act2 = act2.int().tolist()
-    envs.step(act2)
-    print(type(act2))
+    _, _, _, _, info = envs.step(act2)
+    _, _, _, _, info = envs.step(act2)
+    print(info["episode_frame_number"])
+    for item in info:
+        print(item)

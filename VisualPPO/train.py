@@ -14,7 +14,7 @@ if __name__ == '__main__':
         "--path", type=str, default='', help="path of model"
     )
     parser.add_argument(
-        "--gym_id", type=str, default='Assault-v5', help=""
+        "--gym_id", type=str, default='Galaxian-v5', help=""
     )
     parser.add_argument(
         "--exp_name", type=str, default='default_exp_name', help=""
@@ -39,7 +39,7 @@ if __name__ == '__main__':
         "--num_epochs", type=int, default=4, help=""
     )
     parser.add_argument(
-        "--num_skip_frame", type=int, default=4, help=""
+        "--num_skip_frame", type=int, default=1, help=""
     )
     parser.add_argument(
         "--minibatch_size", type=int, default=4, help=""
@@ -48,11 +48,13 @@ if __name__ == '__main__':
         "--clip_coef", type=float, default=.1, help=""
     )
     parser.add_argument(
-        "--lossv_coef", type=int, default=.5, help=""
+        "--lossv_coef", type=float, default=.5, help=""
     )
     parser.add_argument(
-        "--losse_coef", type=int, default=.01, help=""
+        "--losse_coef", type=float, default=.01, help=""
     )
+    parser.add_argument(
+        "--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
     parser.add_argument(
         "--norm_adv", type=bool, default=True, help="if normalize advantage function"
     )
@@ -86,7 +88,7 @@ if __name__ == '__main__':
     # env setup
     run_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     envs = gym.vector.SyncVectorEnv(
-        [make_env('ALE/Assault-v5', args.seed + i, i, False, run_name) for i in range(args.num_envs)]
+        [make_env('ALE/Galaxian-v5', args.seed + i, i, False, run_name) for i in range(args.num_envs)]
     )
 
     # model setup
