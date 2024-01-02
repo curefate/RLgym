@@ -87,9 +87,9 @@ if __name__ == '__main__':
 
     # env setup
     run_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
-    envs = gym.vector.SyncVectorEnv(
-        [make_env('ALE/Galaxian-v5', args.seed + i, i, False, run_name) for i in range(args.num_envs)]
-    )
+    envs = gym.vector.SyncVectorEnv([
+        make_env('ALE/Galaxian-v5', args.seed + i, i, run_name, render=True) for i in range(args.num_envs)
+    ])
 
     # model setup
     agent = vPPO(envs.single_action_space.n).to(args.device)

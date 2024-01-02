@@ -18,9 +18,12 @@ def layer_init(layer, std=np.sqrt(2), bias_const=.0):
     return layer
 
 
-def make_env(gym_id, seed, idx, capture_video, run_name):
+def make_env(gym_id, seed, idx, run_name, capture_video=False, render=False):
     def thunk():
-        env = gym.make(gym_id, render_mode=None)
+        if render and idx == 0:
+            env = gym.make(gym_id, render_mode="human")
+        else:
+            env = gym.make(gym_id, render_mode=None)
         # env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
@@ -164,7 +167,7 @@ def train(agent: vPPO, envs, args):
             # Go next
             next_done = torch.tensor(done).to(args.device)
 
-        # todo
+        # todo log
 
         # Learning: Calculate GAE
         with torch.no_grad():
