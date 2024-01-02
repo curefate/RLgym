@@ -39,6 +39,9 @@ if __name__ == '__main__':
         "--num_epochs", type=int, default=4, help=""
     )
     parser.add_argument(
+        "--num_skip_frame", type=int, default=4, help=""
+    )
+    parser.add_argument(
         "--minibatch_size", type=int, default=4, help=""
     )
     parser.add_argument(
@@ -87,7 +90,7 @@ if __name__ == '__main__':
     )
 
     # model setup
-    agent = vPPO(envs.action_space.n)
+    agent = vPPO(7)
 
     train(agent, envs, args)
 

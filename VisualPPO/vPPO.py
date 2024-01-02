@@ -115,7 +115,7 @@ def train(agent: vPPO, envs, args):
     action = torch.tensor(0)
     next_done = torch.zeros(args.num_envs).to(args.device)
     # skip frame
-    for i in range(3):
+    for i in range(args.num_skip_frame - 1):
         temp_obs, _, temp_terminated, temp_truncated, _ = envs.step(action.item())
         next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
         for d in range(temp_terminated):
@@ -148,7 +148,7 @@ def train(agent: vPPO, envs, args):
             next_obs, reward, terminated, truncated, _ = envs.step(action.item())
             next_obs = next_obs[:, None, :, :]
             # skip frame
-            for i in range(3):
+            for i in range(args.num_skip_frame - 1):
                 temp_obs, temp_reward, temp_terminated, temp_truncated, info = envs.step(action.item())
                 next_obs = torch.cat([next_obs, temp_obs[:, None, :, :]], dim=1)
                 reward += temp_reward
