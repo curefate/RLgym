@@ -72,6 +72,7 @@ class vPPO(nn.Module):
         logits = self.actor(self.vision(state))
         probs = torch.distributions.Categorical(logits)
         action = probs.sample()
+        print(action)
         return action
 
     def save(self, path):
@@ -170,19 +171,33 @@ def train(agent: vPPO, envs, args):
         # todo log
 
         # Learning: Calculate GAE
+        # with torch.no_grad():
+        #     _, _, _, next_value = agent.get_values(next_obs)
+        #     td_targets = storage_rewards + args.gamma * next_value.view(-1, args.num_envs) * (1 - storage_dones)
+        #     td_values = storage_values
+        #     td_delta = (td_targets - td_values).cpu().detach().numpy()
+        #     advantage = 0
+        #     storage_advantages = []
+        #     for delta in td_delta[::-1]:  # 逆序时序差分值 axis=1轴上倒着取 [], [], []
+        #         # GAE
+        #         advantage = args.gamma * args.lmbda * advantage + delta
+        #         storage_advantages.append(advantage)
+        #     storage_advantages.reverse()
+        #     storage_advantages = torch.tensor(storage_advantages, dtype=torch.float).to(args.device)
         with torch.no_grad():
             _, _, _, next_value = agent.get_values(next_obs)
-            td_targets = storage_rewards + args.gamma * next_value.view(-1, args.num_envs) * (1 - storage_dones)
-            td_values = storage_values
-            td_delta = (td_targets - td_values).cpu().detach().numpy()
-            advantage = 0
-            storage_advantages = []
-            for delta in td_delta[::-1]:  # 逆序时序差分值 axis=1轴上倒着取 [], [], []
-                # GAE
-                advantage = args.gamma * args.lmbda * advantage + delta
-                storage_advantages.append(advantage)
-            storage_advantages.reverse()
-            storage_advantages = torch.tensor(storage_advantages, dtype=torch.float).to(args.device)
+            next_value = next_value.reshape(1, -1)
+            storage_advantages = torch.zeros_like(storage_rewards).to(args.device)
+            lastgaelam = 0
+            for t in reversed(range(args.num_rollout_step)):
+                if t == args.num_rollout_step - 1:
+                    nextnonterminal = torch.ones_like(next_done).int() - next_done.int()
+                    nextvalues = next_value
+                else:
+                    nextnonterminal = torch.ones_like(next_done).int() - storage_dones[t + 1].int()
+                    nextvalues = storage_values[t + 1]
+                td_delta = storage_rewards[t] + args.gamma * nextvalues * nextnonterminal - storage_values[t]
+                storage_advantages[t] = lastgaelam = td_delta + args.gamma * args.lmbda * nextnonterminal * lastgaelam
 
         # Reshape storage
         storage_opt_observations = storage_observations.reshape((-1,) + (args.num_skip_frame, 210, 160))
@@ -252,7 +267,7 @@ def train(agent: vPPO, envs, args):
             path = "ckpt/"
             if not os.path.exists(path):
                 os.mkdir(path)
-            agent.save(path + run_name + f"_{str(global_step + args.already_trained_times).zfill(6)}.pt")
+            agent.save(path + run_name + f"_step{str(global_step + args.already_trained_times).zfill(6)}.pt")
 
     writer.close()
     return
@@ -265,16 +280,16 @@ if __name__ == '__main__':
     # print(out.shape)
 
     envs = gym.vector.SyncVectorEnv([
-        lambda: gym.make("ALE/Assault-v5", obs_type="grayscale") for i in range(8)
+        lambda: gym.make("ALE/Breakout-v5", obs_type="grayscale") for i in range(8)
     ])
     obs, info = envs.reset()
     obs = torch.tensor(obs)[:, None, :, :]
     print(obs.shape)
-    new = torch.cat([obs, obs, obs, obs], dim=1)
-    print(new.shape)
+    # new = torch.cat([obs, obs, obs, obs], dim=1)
+    # print(new.shape)
 
     agent = vPPO(7)
-    out = agent.select_action(new)
+    out = agent.select_action(obs)
     print(out.shape)
 
     act = [0, 0, 0, 0, 0, 0, 0, 0]

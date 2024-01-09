@@ -14,7 +14,7 @@ if __name__ == '__main__':
         "--path", type=str, default='', help="path of model"
     )
     parser.add_argument(
-        "--gym_id", type=str, default='Galaxian-v5', help=""
+        "--gym_id", type=str, default='Breakout-v5', help=""
     )
     parser.add_argument(
         "--exp_name", type=str, default='default_exp_name', help=""
@@ -88,7 +88,7 @@ if __name__ == '__main__':
     # env setup
     run_name = f"{args.gym_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     envs = gym.vector.SyncVectorEnv([
-        make_env('ALE/Galaxian-v5', args.seed + i, i, run_name, render=True) for i in range(args.num_envs)
+        make_env('ALE/Breakout-v5', args.seed + i, i, run_name, render=True) for i in range(args.num_envs)
     ])
 
     # model setup

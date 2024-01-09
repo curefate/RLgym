@@ -2,25 +2,26 @@
 import torch
 import gymnasium as gym
 
-from VisualPPO.vPPO import vPPO, fetch_image
+from VisualPPO.vPPO import vPPO, make_env
 
 if __name__ == '__main__':
-    env = gym.make('LunarLander-v2', render_mode="human")
+    env = gym.make('ALE/Galaxian-v5', render_mode="human")
+    env = gym.wrappers.GrayScaleObservation(env)
 
     device = "cuda"
-    model = vPPO(512, env.action_space.n, device)
-    model.load("LunarLander-v2/checkpoint/005000.pt")
+    agent = vPPO(env.action_space.n).to(device)
+    agent.load("ckpt0/Galaxian-v5__default_exp_name__1__1704695912_step3686400.pt")
     for iters in range(10):
         done = False
-        _, info = env.reset()
-        screen = model.img2tensor(fetch_image())
-        state = model.screen2state(screen)
+        state, _ = env.reset()
+        state = torch.tensor(state)[None, None, :, :].to(device)
         total_reward = 0
         while not done:
-            action = model.select_action(state)
-            _, reward, terminated, truncated, info = env.step(action)
-            screen = model.img2tensor(fetch_image())
-            state = model.screen2state(screen)
+            action = agent.select_action(state)
+            state, reward, terminated, truncated, _ = env.step(action.item())
+            state = torch.tensor(state)[None, None, :, :].to(device)
+            if reward != 0.:
+                print(reward)
             total_reward += reward
             if terminated or truncated:
                 done = True
